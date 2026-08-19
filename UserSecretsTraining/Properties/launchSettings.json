@@ -5,6 +5,21 @@
       "environmentVariables": {
         "DOTNET_ENVIRONMENT": "Development"
       }
+    },
+    "UserSecretsTraining (EnvVar Override)": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "Development",
+        "SecretApiKey": "API Key from environment!"
+      }
+    },
+    "UserSecretsTraining (CommandLine Override)": {
+      "commandName": "Project",
+      "commandLineArgs": "--SecretApiKey=\"API Key from command line!\"",
+      "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "Development",
+        "SecretApiKey": "API Key from environment!"
+      }
     }
   }
 }
