@@ -2,7 +2,9 @@
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Configuration.EnvironmentVariables;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Spectre.Console;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -27,9 +29,9 @@ if (!string.IsNullOrEmpty(keyVaultUrl))
     }
     catch (Exception ex) when (ex is AuthenticationFailedException or RequestFailedException or AggregateException)
     {
-        // Network failures arrive as an AggregateException after the SDK's retries; show the first underlying error
         // A failed reload leaves the source in the list, so take it back out
         sources.Remove(keyVaultSource);
+        // Network failures arrive as an AggregateException after the SDK's retries; show the first underlying error
         var reason = ex is AggregateException agg ? agg.InnerExceptions[0] : ex;
         AnsiConsole.MarkupLine($"[bold yellow]Couldn't load secrets from Key Vault at {Markup.Escape(keyVaultUrl)}.[/]");
         AnsiConsole.MarkupLine($"[yellow]{Markup.Escape(reason.Message.Split('\n')[0].Trim())}[/]");
@@ -38,16 +40,43 @@ if (!string.IsNullOrEmpty(keyVaultUrl))
     }
 }
 
+builder.Services.AddOptions<AppSettings>()
+    .Bind(builder.Configuration)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+using var host = builder.Build();
+
+AppSettings settings;
+try
+{
+    // Runs the ValidateOnStart checks. A long-running app gets this from host.Run(); this one never starts the host.
+    host.Services.GetRequiredService<IStartupValidator>().Validate();
+    settings = host.Services.GetRequiredService<IOptions<AppSettings>>().Value;
+}
+catch (OptionsValidationException ex)
+{
+    AnsiConsole.MarkupLine("[bold red]Configuration is invalid, so the app won't start:[/]");
+    foreach (var failure in ex.Failures)
+        AnsiConsole.MarkupLine($"[red]  {Markup.Escape(failure)}[/]");
+    return 1;
+}
+
 AnsiConsole.MarkupLine("[bold green]Here's your current configuration:[/]");
 
 var table = new Table()
     .AddColumn("[bold]Key[/]")
     .AddColumn("[bold]Value[/]")
     .AddColumn("[bold]Source[/]")
-    .AddRow("[yellow]NotSecretSetting[/]", configRoot["NotSecretSetting"] ?? "", Markup.Escape(GetSource("NotSecretSetting")))
-    .AddRow("[yellow]SecretApiKey[/]", $"[red]{Markup.Escape(configRoot["SecretApiKey"] ?? "")}[/]", Markup.Escape(GetSource("SecretApiKey")));
+    .AddRow("[yellow]NotSecretSetting[/]", Markup.Escape(settings.NotSecretSetting), Markup.Escape(GetSource("NotSecretSetting")))
+    .AddRow("[yellow]SecretApiKey[/]", $"[red]{Markup.Escape(Mask(settings.SecretApiKey))}[/]", Markup.Escape(GetSource("SecretApiKey")));
 
 AnsiConsole.Write(table);
+return 0;
+
+// Shows just enough to tell values apart without printing the secret itself
+static string Mask(string secret) =>
+    secret.Length <= 4 ? new string('*', secret.Length) : $"{secret[..4]}… ({secret.Length} chars)";
 
 string GetSource(string key)
 {
