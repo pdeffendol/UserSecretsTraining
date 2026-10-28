@@ -1,6 +1,7 @@
 ﻿using Azure;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration.EnvironmentVariables;
 using Microsoft.Extensions.Hosting;
 using Spectre.Console;
 
@@ -11,13 +12,24 @@ IConfigurationRoot configRoot = builder.Configuration;
 var keyVaultUrl = configRoot["KeyVaultUrl"];
 if (!string.IsNullOrEmpty(keyVaultUrl))
 {
+    // Insert Key Vault just before the (unprefixed) environment variables source so that env vars and the
+    // command line can still override it. AddAzureKeyVault would append it last, giving it the final say.
+    var keyVaultSource = new ConfigurationBuilder()
+        .AddAzureKeyVault(new Uri(keyVaultUrl), new DefaultAzureCredential())
+        .Sources[0];
+    var sources = builder.Configuration.Sources;
+    var envVarsIndex = sources.ToList().FindLastIndex(s => s is EnvironmentVariablesConfigurationSource);
+
     try
     {
-        builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUrl), new DefaultAzureCredential());
+        // Inserting reloads every source, which is when Key Vault is actually contacted
+        sources.Insert(envVarsIndex, keyVaultSource);
     }
     catch (Exception ex) when (ex is AuthenticationFailedException or RequestFailedException or AggregateException)
     {
         // Network failures arrive as an AggregateException after the SDK's retries; show the first underlying error
+        // A failed reload leaves the source in the list, so take it back out
+        sources.Remove(keyVaultSource);
         var reason = ex is AggregateException agg ? agg.InnerExceptions[0] : ex;
         AnsiConsole.MarkupLine($"[bold yellow]Couldn't load secrets from Key Vault at {Markup.Escape(keyVaultUrl)}.[/]");
         AnsiConsole.MarkupLine($"[yellow]{Markup.Escape(reason.Message.Split('\n')[0].Trim())}[/]");
